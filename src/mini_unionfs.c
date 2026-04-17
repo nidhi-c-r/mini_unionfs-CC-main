@@ -1,4 +1,50 @@
 //part1(muskan)
+#define _GNU_SOURCE
+#define FUSE_USE_VERSION 31
+
+#include <fuse3/fuse.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <libgen.h>
+
+struct mini_unionfs_state {
+    char lower_dir[PATH_MAX];
+    char upper_dir[PATH_MAX];
+};
+
+#define UNIONFS_DATA ((struct mini_unionfs_state *) fuse_get_context()->private_data)
+
+// Helper to build paths without double slashes
+static void build_path(char *buf, const char *dir, const char *path) {
+    if (path[0] == '/') {
+        snprintf(buf, PATH_MAX, "%s%s", dir, path);
+    } else {
+        snprintf(buf, PATH_MAX, "%s/%s", dir, path);
+    }
+}
+
+// Robust Whiteout Builder
+static void build_whiteout(char *buf, const char *dir, const char *path) {
+    char d_path[PATH_MAX], b_path[PATH_MAX];
+    strncpy(d_path, path, PATH_MAX - 1);
+    strncpy(b_path, path, PATH_MAX - 1);
+    d_path[PATH_MAX-1] = b_path[PATH_MAX-1] = '\0';
+
+    char *d_name = dirname(d_path);
+    char *b_name = basename(b_path);
+
+    if (strcmp(d_name, "/") == 0 || strcmp(d_name, ".") == 0) {
+        snprintf(buf, PATH_MAX, "%s/.wh.%s", dir, b_name);
+    } else {
+        snprintf(buf, PATH_MAX, "%s/%s/.wh.%s", dir, d_name, b_name);
+    }
+}
 
 //part2(anish)
 
