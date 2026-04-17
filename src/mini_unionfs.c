@@ -49,7 +49,69 @@ static void build_whiteout(char *buf, const char *dir, const char *path) {
 //part2(anish)
 
 //part3(udupa)
+static int unionfs_open(const char *path, struct fuse_file_info *fi) {
+    char resolved[PATH_MAX];
+    struct mini_unionfs_state *st = UNIONFS_DATA;
+    if (resolve_path(path, resolved) != 0) return -ENOENT;
 
+    if ((fi->flags & (O_WRONLY | O_RDWR))) {
+        // If it's currently in lower, copy it to upper
+        if (strncmp(resolved, st->lower_dir, strlen(st->lower_dir)) == 0) {
+            if (copy_to_upper(path) != 0) return -EIO;
+            build_path(resolved, st->upper_dir, path);
+        }
+    }
+    int fd = open(resolved, fi->flags);
+    if (fd < 0) return -errno;
+    fi->fh = fd;
+    return 0;
+}
+
+static int unionfs_read(const char *p, char *b, size_t s, off_t o, struct fuse_file_info *fi) {
+    (void)p; int res = pread(fi->fh, b, s, o);
+    return res < 0 ? -errno : res;
+}
+
+static int unionfs_write(const char *p, const char *b, size_t s, off_t o, struct fuse_file_info *fi) {
+    (void)p; int res = pwrite(fi->fh, b, s, o);
+    return res < 0 ? -errno : res;
+}
+
+static int unionfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags) {
+    (void)offset; (void)fi; (void)flags;
+    struct mini_unionfs_state *st = UNIONFS_DATA;
+    DIR *dp; struct dirent *de;
+    char upper[PATH_MAX], lower[PATH_MAX];
+    build_path(upper, st->upper_dir, path);
+    build_path(lower, st->lower_dir, path);
+
+    filler(buf, ".", NULL, 0, 0);
+    filler(buf, "..", NULL, 0, 0);
+
+    dp = opendir(upper);
+    if (dp) {
+        while ((de = readdir(dp)) != NULL) {
+            if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
+            if (!strncmp(de->d_name, ".wh.", 4)) continue;
+            filler(buf, de->d_name, NULL, 0, 0);
+        }
+        closedir(dp);
+    }
+
+    dp = opendir(lower);
+    if (dp) {
+        while ((de = readdir(dp)) != NULL) {
+            if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
+            char wh_name[PATH_MAX], up_name[PATH_MAX];
+            snprintf(wh_name, PATH_MAX, "%s/.wh.%s", upper, de->d_name);
+            snprintf(up_name, PATH_MAX, "%s/%s", upper, de->d_name);
+            if (access(wh_name, F_OK) == 0 || access(up_name, F_OK) == 0) continue;
+            filler(buf, de->d_name, NULL, 0, 0);
+        }
+        closedir(dp);
+    }
+    return 0;
+}
 //part4(cr)
 static int unionfs_unlink(const char *path) {
     struct mini_unionfs_state *st = UNIONFS_DATA;
@@ -91,6 +153,7 @@ static struct fuse_operations unionfs_oper = {
     .read = unionfs_read, .write = unionfs_write, .unlink = unionfs_unlink,
     .release = unionfs_release, .mkdir = unionfs_mkdir,
 };
+
 
 int main(int argc, char *argv[]) {
     if (argc < 4) return 1;
